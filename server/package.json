@@ -1,0 +1,21 @@
+{
+  "name": "meeting-server",
+  "version": "1.0.0",
+  "description": "Node.js WebSocket server for MeetingProject",
+  "main": "MeetingServer.js",
+  "scripts": {
+    "start": "node MeetingServer.js",
+    "dev": "node MeetingServer.js"
+  },
+  "keywords": [
+    "websocket",
+    "meeting",
+    "server"
+  ],
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "ws": "^8.18.0",
+    "dotenv": "^16.4.5"
+  }
+}
