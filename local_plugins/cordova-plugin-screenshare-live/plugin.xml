@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
+        id="cordova-plugin-screenshare-live"
+        version="1.1.0">
+
+  <name>ScreenShareLive</name>
+  <description>Live screen capture for WebRTC — Android MediaProjection + iOS ReplayKit Broadcast (WhatsApp-style full device share)</description>
+  <license>MIT</license>
+
+  <js-module src="www/ScreenShareLive.js" name="ScreenShareLive">
+    <clobbers target="ScreenShareLive" />
+  </js-module>
+
+  <platform name="android">
+    <config-file target="res/xml/config.xml" parent="/*">
+      <feature name="ScreenShareLive">
+        <param name="android-package" value="com.callapp.screenshare.ScreenShareLivePlugin"/>
+        <param name="onload" value="true"/>
+      </feature>
+    </config-file>
+
+    <config-file target="AndroidManifest.xml" parent="/*">
+      <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+      <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+      <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    </config-file>
+
+    <config-file target="AndroidManifest.xml" parent="./application">
+      <service
+        android:name="com.callapp.screenshare.ScreenShareService"
+        android:enabled="true"
+        android:exported="false"
+        android:foregroundServiceType="mediaProjection" />
+    </config-file>
+
+    <source-file src="src/android/ScreenShareLivePlugin.java"
+                 target-dir="src/com/callapp/screenshare" />
+    <source-file src="src/android/ScreenShareService.java"
+                 target-dir="src/com/callapp/screenshare" />
+
+    <framework src="androidx.core:core:1.13.1" />
+  </platform>
+
+  <platform name="ios">
+    <config-file target="config.xml" parent="/*">
+      <feature name="ScreenShareLive">
+        <param name="ios-package" value="ScreenShareLivePlugin"/>
+      </feature>
+    </config-file>
+
+    <!-- App Group partagé avec l'extension Broadcast (l'extension doit avoir le même, cf. README_IOS.md) -->
+    <config-file target="*/Entitlements-Debug.plist" parent="com.apple.security.application-groups">
+      <array>
+        <string>group.com.callapp.terminal.screenshare</string>
+      </array>
+    </config-file>
+    <config-file target="*/Entitlements-Release.plist" parent="com.apple.security.application-groups">
+      <array>
+        <string>group.com.callapp.terminal.screenshare</string>
+      </array>
+    </config-file>
+
+    <!-- Frameworks requis -->
+    <framework src="ReplayKit.framework" />
+    <framework src="AVFoundation.framework" />
+    <framework src="CoreImage.framework" />
+    <framework src="CoreMedia.framework" />
+    <framework src="CoreVideo.framework" />
+    <framework src="ImageIO.framework" />
+
+    <!-- Fichiers source de l'app principale -->
+    <header-file src="src/ios/ScreenShareLivePlugin.h" />
+    <source-file src="src/ios/ScreenShareLivePlugin.m" />
+
+    <!-- Broadcast Upload Extension (src/ios/BroadcastExtension/) ajoutée au projet Xcode à chaque
+         prepare, via la gem Ruby xcodeproj (fournie avec CocoaPods) -->
+    <hook type="after_prepare" src="scripts/ios_add_broadcast_extension.js" />
+  </platform>
+</plugin>

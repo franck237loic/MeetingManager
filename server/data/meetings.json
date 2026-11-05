@@ -1,4 +1,20 @@
 {
-  "meetings": [],
-  "lastUpdated": null
+  "meetings": [
+    {
+      "id": "meeting_1793894799532_5eyx4gfjv",
+      "code": "806-801",
+      "title": "qcqscc",
+      "description": "zrgrgre",
+      "organizerId": "client_1793894756788_6f9c4uxqm",
+      "startDateTime": "2026-11-06T08:39:00.000Z",
+      "endDateTime": "2026-11-06T09:39:00.000Z",
+      "duration": 60,
+      "meetingType": "video",
+      "maxParticipants": 10,
+      "status": "scheduled",
+      "createdAt": "2026-11-05T16:06:39.532Z",
+      "updatedAt": "2026-11-05T16:06:39.532Z"
+    }
+  ],
+  "lastUpdated": "2026-11-05T16:06:39.532Z"
 }

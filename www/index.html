@@ -5,14 +5,14 @@
     distributed with this work for additional information
     regarding copyright ownership.  The ASF licenses this file
     to you under the Apache License, Version 2.0 (the
-    "License"); you may not use this file except in compliance
+    "License"); you may obtain this file except in compliance
     with the License.  You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+        http://www.apache.org/licenses/LICENSE-2.0
 
     Unless required by applicable law or agreed to in writing,
-    software distributed under the License is distributed on an
-    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+    software distributed under the License is distributed on
+    an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF
      KIND, either express or implied.  See the License for the
     specific language governing permissions and limitations
     under the License.
@@ -20,30 +20,291 @@
 <html>
     <head>
         <meta charset="utf-8">
-        <!--
-        Customize this policy to fit your own app's needs. For more guidance, please refer to the docs:
-            https://cordova.apache.org/docs/en/latest/
-        Some notes:
-            * https://ssl.gstatic.com is required only on Android and is needed for TalkBack to function properly
-            * Disables use of inline scripts in order to mitigate risk of XSS vulnerabilities. To change this:
-                * Enable inline JS: add 'unsafe-inline' to default-src
-        -->
-        <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: https://ssl.gstatic.com 'unsafe-eval' ws://192.168.1.189:8080; style-src 'self' 'unsafe-inline'; media-src *; img-src 'self' data: content:; connect-src 'self' ws://192.168.1.189:8080;">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: https://ssl.gstatic.com 'unsafe-eval' wss://meeting-server-vrpf.onrender.com; style-src 'self' 'unsafe-inline'; media-src *; img-src 'self' data: content:; connect-src 'self' wss://meeting-server-vrpf.onrender.com;">
         <meta name="format-detection" content="telephone=no">
         <meta name="msapplication-tap-highlight" content="no">
         <meta name="viewport" content="initial-scale=1, width=device-width, viewport-fit=cover">
         <meta name="color-scheme" content="light dark">
         <link rel="stylesheet" href="css/index.css">
-        <title>Hello World</title>
+        <title>Meeting Manager</title>
     </head>
     <body>
-        <div class="app">
-            <h1>Apache Cordova</h1>
-            <div id="deviceready" class="blink">
-                <p class="event listening">Connecting to Device</p>
-                <p class="event received">Device is Ready</p>
+        <!-- Container principal -->
+        <div class="app-container">
+            <!-- Barre latérale -->
+            <aside class="sidebar">
+                <div class="sidebar-header">
+                    <h2>Meeting Manager</h2>
+                </div>
+                <nav class="sidebar-nav">
+                    <button class="nav-item active" data-view="dashboard">
+                        <span class="nav-icon">📊</span>
+                        <span class="nav-text">Tableau de bord</span>
+                    </button>
+                    <button class="nav-item" data-view="meetings">
+                        <span class="nav-icon">📅</span>
+                        <span class="nav-text">Mes réunions</span>
+                    </button>
+                    <button class="nav-item" data-view="join">
+                        <span class="nav-icon">🔗</span>
+                        <span class="nav-text">Rejoindre</span>
+                    </button>
+                </nav>
+                <div class="sidebar-footer">
+                    <div id="connection-status" class="connection-status">
+                        <span class="status-indicator"></span>
+                        <span class="status-text">Connexion...</span>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Contenu principal -->
+            <main class="main-content">
+                <!-- En-tête -->
+                <header class="header">
+                    <h1 id="page-title">Tableau de bord</h1>
+                    <button id="btn-new-meeting" class="btn btn-primary">
+                        <span>+</span> Nouvelle réunion
+                    </button>
+                </header>
+
+                <!-- Vue Tableau de bord -->
+                <div id="view-dashboard" class="view active">
+                    <!-- Statistiques -->
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-icon">📅</div>
+                            <div class="stat-info">
+                                <div class="stat-value" id="stat-scheduled">0</div>
+                                <div class="stat-label">Programmées</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">✅</div>
+                            <div class="stat-info">
+                                <div class="stat-value" id="stat-completed">0</div>
+                                <div class="stat-label">Terminées</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">❌</div>
+                            <div class="stat-info">
+                                <div class="stat-value" id="stat-cancelled">0</div>
+                                <div class="stat-label">Annulées</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Réunions récentes -->
+                    <div class="section">
+                        <h2>Réunions récentes</h2>
+                        <div id="recent-meetings" class="meetings-list">
+                            <div class="loading">Chargement...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Vue Liste des réunions -->
+                <div id="view-meetings" class="view">
+                    <div class="section">
+                        <div class="section-header">
+                            <h2>Mes réunions</h2>
+                            <div class="filter-buttons">
+                                <button class="filter-btn active" data-filter="all">Toutes</button>
+                                <button class="filter-btn" data-filter="upcoming">À venir</button>
+                                <button class="filter-btn" data-filter="ongoing">En cours</button>
+                                <button class="filter-btn" data-filter="completed">Terminées</button>
+                            </div>
+                        </div>
+                        <div id="all-meetings" class="meetings-list">
+                            <div class="loading">Chargement...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Vue Rejoindre une réunion -->
+                <div id="view-join" class="view">
+                    <div class="section">
+                        <h2>Rejoindre une réunion</h2>
+                        <div class="join-card">
+                            <div class="form-group">
+                                <label for="join-code">Code de la réunion</label>
+                                <input type="text" id="join-code" placeholder="XXX-XXX" maxlength="7">
+                            </div>
+                            <div class="form-group">
+                                <label for="join-name">Votre nom</label>
+                                <input type="text" id="join-name" placeholder="Entrez votre nom">
+                            </div>
+                            <button id="btn-join" class="btn btn-primary">Rejoindre</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Vue Salle d'attente -->
+                <div id="view-waiting-room" class="view">
+                    <div class="waiting-room">
+                        <div id="waiting-room-info" class="waiting-info"></div>
+                        <div class="waiting-participants">
+                            <h3>Participants</h3>
+                            <div id="participants-list" class="participants-list"></div>
+                        </div>
+                        <div class="waiting-actions">
+                            <button id="btn-enter-meeting" class="btn btn-primary btn-large">
+                                🎥 Rejoindre maintenant
+                            </button>
+                            <button id="btn-leave-waiting" class="btn btn-secondary">
+                                ← Retour
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Vue Salle de réunion -->
+                <div id="view-meeting-room" class="view">
+                    <div class="meeting-room">
+                        <div class="meeting-room-header">
+                            <h2 id="meeting-room-title">Réunion en cours</h2>
+                            <div class="meeting-room-controls">
+                                <button id="btn-switch-camera" class="btn btn-secondary control-btn" title="Changer de caméra">
+                                    🔄
+                                </button>
+                                <button id="btn-screen-share" class="btn btn-secondary control-btn" title="Partager l'écran">
+                                    🖥️
+                                </button>
+                                <button id="btn-leave-meeting" class="btn btn-danger">
+                                    📞 Quitter
+                                </button>
+                            </div>
+                        </div>
+                        <div class="meeting-room-content">
+                            <div class="meeting-room-participants">
+                                <h3>Participants</h3>
+                                <div id="room-participants-list" class="participants-list"></div>
+                            </div>
+                            <div class="meeting-room-main">
+                                <div id="video-grid" class="video-grid">
+                                    <!-- Flux vidéo local -->
+                                    <div class="video-container local-video">
+                                        <video id="local-video" autoplay muted playsinline></video>
+                                        <div class="video-label">Vous</div>
+                                        <div class="video-indicators">
+                                            <span id="local-mic-indicator" class="indicator">🎤</span>
+                                            <span id="local-cam-indicator" class="indicator">📷</span>
+                                        </div>
+                                    </div>
+                                    <!-- Flux vidéo distants seront ajoutés dynamiquement -->
+                                </div>
+                            </div>
+                        </div>
+                        <div class="meeting-room-footer">
+                            <div class="media-controls">
+                                <button id="btn-toggle-mic" class="btn btn-media btn-mic-off" title="Activer le microphone">
+                                    🎤
+                                </button>
+                                <button id="btn-toggle-cam" class="btn btn-media btn-cam-off" title="Activer la caméra">
+                                    📷
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <!-- Modal de création/modification de réunion -->
+        <div id="meeting-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="modal-title">Nouvelle réunion</h2>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <form id="meeting-form" class="modal-body">
+                    <input type="hidden" id="meeting-id">
+                    
+                    <div class="form-group">
+                        <label for="meeting-title">Titre *</label>
+                        <input type="text" id="meeting-title" required placeholder="Titre de la réunion">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="meeting-description">Description</label>
+                        <textarea id="meeting-description" rows="3" placeholder="Description de la réunion"></textarea>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="meeting-date">Date *</label>
+                            <input type="date" id="meeting-date" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="meeting-time">Heure *</label>
+                            <input type="time" id="meeting-time" required>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="meeting-duration">Durée (minutes) *</label>
+                        <input type="number" id="meeting-duration" min="15" step="15" value="60" required>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="meeting-type">Type *</label>
+                            <select id="meeting-type" required>
+                                <option value="video">Vidéo</option>
+                                <option value="audio">Audio</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="meeting-participants">Participants max *</label>
+                            <input type="number" id="meeting-participants" min="2" max="100" value="10" required>
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary modal-cancel">Annuler</button>
+                        <button type="submit" class="btn btn-primary">Enregistrer</button>
+                    </div>
+                </form>
             </div>
         </div>
+
+        <!-- Modal de confirmation -->
+        <div id="confirm-modal" class="modal">
+            <div class="modal-content modal-small">
+                <div class="modal-header">
+                    <h2>Confirmation</h2>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p id="confirm-message">Êtes-vous sûr de vouloir effectuer cette action ?</p>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary modal-cancel">Annuler</button>
+                        <button type="button" class="btn btn-danger" id="confirm-btn">Confirmer</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal de détails de réunion -->
+        <div id="details-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Détails de la réunion</h2>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div id="meeting-details-content"></div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary modal-cancel">Fermer</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast de notification -->
+        <div id="toast" class="toast"></div>
+
         <script src="cordova.js"></script>
         <script src="js/MeetingManager.js"></script>
         <script src="js/index.js"></script>

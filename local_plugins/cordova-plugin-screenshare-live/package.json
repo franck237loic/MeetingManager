@@ -1,0 +1,12 @@
+{
+  "name": "cordova-plugin-screenshare-live",
+  "version": "1.1.0",
+  "description": "Live screen capture for WebRTC — Android MediaProjection + iOS ReplayKit Broadcast Extension (WhatsApp-style full device share)",
+  "cordova": {
+    "id": "cordova-plugin-screenshare-live",
+    "platforms": ["android", "ios"]
+  },
+  "keywords": ["cordova", "android", "ios", "screenshare", "mediaprojection", "replaykit", "broadcast", "webrtc"],
+  "author": "app-appel",
+  "license": "MIT"
+}

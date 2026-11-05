@@ -5,7 +5,10 @@
   "description": "A sample Apache Cordova application that responds to the deviceready event.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "sync-public": "cp -r www/* public/",
+    "build": "npm run sync-public",
+    "prepare": "npm run build"
   },
   "keywords": [
     "ecosystem:cordova"
@@ -13,11 +16,19 @@
   "author": "Apache Cordova Team",
   "license": "Apache-2.0",
   "devDependencies": {
-    "cordova-android": "^15.1.0"
+    "cordova-android": "^15.1.0",
+    "cordova-browser": "^7.0.0",
+    "cordova-plugin-iosrtc": "^8.0.4",
+    "cordova-plugin-screenshare-live": "file:local_plugins/cordova-plugin-screenshare-live"
   },
   "cordova": {
     "platforms": [
-      "android"
-    ]
+      "android",
+      "browser"
+    ],
+    "plugins": {
+      "cordova-plugin-iosrtc": {},
+      "cordova-plugin-screenshare-live": {}
+    }
   }
 }

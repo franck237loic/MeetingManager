@@ -21,6 +21,8 @@ class MeetingServer {
         this.meetings = []; // Stocke les réunions
         this.meetingsFile = path.join(__dirname, 'data', 'meetings.json');
         this.fileLock = false; // Verrou pour éviter les écritures concurrentes
+        this.participants = new Map(); // Stocke les participants par réunion (meetingId -> Map of participantId -> participant)
+        this.clientToMeeting = new Map(); // Stocke le mapping clientId -> meetingId pour les participants actifs
     }
 
     /**
@@ -150,6 +152,70 @@ class MeetingServer {
                 return;
             }
 
+            // === MODULE 4: GESTION DES PARTICIPANTS ===
+
+            // Rejoindre une réunion
+            if (message.type === 'JOIN_MEETING') {
+                this.handleJoinMeeting(ws, clientId, message);
+                return;
+            }
+
+            // Quitter une réunion
+            if (message.type === 'LEAVE_MEETING') {
+                this.handleLeaveMeeting(ws, clientId, message);
+                return;
+            }
+
+            // Récupérer les participants
+            if (message.type === 'GET_PARTICIPANTS') {
+                this.handleGetParticipants(ws, clientId, message);
+                return;
+            }
+
+            // === MODULE 5: SIGNALISATION WEBRTC ===
+
+            // Offre WebRTC
+            if (message.type === 'WEBRTC_OFFER') {
+                this.handleWebRTCOffer(ws, clientId, message);
+                return;
+            }
+
+            // Réponse WebRTC
+            if (message.type === 'WEBRTC_ANSWER') {
+                this.handleWebRTCAnswer(ws, clientId, message);
+                return;
+            }
+
+            // ICE Candidate WebRTC
+            if (message.type === 'WEBRTC_ICE_CANDIDATE') {
+                this.handleWebRTCIceCandidate(ws, clientId, message);
+                return;
+            }
+
+            // Renégociation WebRTC
+            if (message.type === 'WEBRTC_RENEGOTIATION') {
+                this.handleWebRTCRenegotiation(ws, clientId, message);
+                return;
+            }
+
+            // Changement d'état média
+            if (message.type === 'MEDIA_STATE_CHANGED') {
+                this.handleMediaStateChanged(ws, clientId, message);
+                return;
+            }
+
+            // Début partage d'écran
+            if (message.type === 'SCREEN_SHARE_STARTED') {
+                this.handleScreenShareStarted(ws, clientId, message);
+                return;
+            }
+
+            // Arrêt partage d'écran
+            if (message.type === 'SCREEN_SHARE_STOPPED') {
+                this.handleScreenShareStopped(ws, clientId, message);
+                return;
+            }
+
             // Message non reconnu
             console.warn(`[MeetingServer] Type de message non reconnu: ${message.type}`);
             this.sendToClient(ws, {
@@ -174,6 +240,9 @@ class MeetingServer {
     handleDisconnection(clientId) {
         console.log(`[MeetingServer] Client déconnecté: ${clientId}`);
         this.clients.delete(clientId);
+        
+        // Nettoyer le participant si présent dans une réunion
+        this.cleanupParticipant(clientId);
     }
 
     /**
@@ -265,6 +334,17 @@ class MeetingServer {
     }
 
     /**
+     * Génère un code de réunion facile à communiquer
+     * Format: XXX-XXX (3 chiffres, tiret, 3 chiffres)
+     * @returns {string} Code de réunion
+     */
+    generateMeetingCode() {
+        const part1 = Math.floor(100 + Math.random() * 900);
+        const part2 = Math.floor(100 + Math.random() * 900);
+        return `${part1}-${part2}`;
+    }
+
+    /**
      * Valide les données d'une réunion
      * @param {object} meetingData - Données de la réunion
      * @returns {object} { valid: boolean, errors: string[] }
@@ -330,6 +410,7 @@ class MeetingServer {
 
             const meeting = {
                 id: this.generateMeetingId(),
+                code: this.generateMeetingCode(),
                 title: message.data.title.trim(),
                 description: message.data.description || '',
                 organizerId: message.data.organizerId,
@@ -346,7 +427,7 @@ class MeetingServer {
             this.meetings.push(meeting);
             await this.saveMeetings();
 
-            console.log('[MeetingServer] Réunion créée:', meeting.id);
+            console.log('[MeetingServer] Réunion créée:', meeting.id, 'Code:', meeting.code);
             this.sendResponse(ws, message.requestId, true, meeting, null);
 
         } catch (error) {
@@ -576,6 +657,266 @@ class MeetingServer {
         });
     }
 
+    // ==================== MODULE 4: GESTION DES PARTICIPANTS ====================
+
+    /**
+     * Gère la demande de rejoindre une réunion
+     * @param {WebSocket} ws - WebSocket du client
+     * @param {string} clientId - Identifiant du client
+     * @param {object} message - Message reçu
+     */
+    async handleJoinMeeting(ws, clientId, message) {
+        try {
+            const meetingCode = message.data?.code;
+            const meetingId = message.data?.meetingId;
+            const participantName = message.data?.participantName || 'Participant';
+
+            console.log('[MeetingServer] Demande de rejoindre réunion par', clientId);
+
+            let meeting = null;
+
+            // Recherche par code ou par ID
+            if (meetingCode) {
+                meeting = this.meetings.find(m => m.code === meetingCode);
+            } else if (meetingId) {
+                meeting = this.meetings.find(m => m.id === meetingId);
+            }
+
+            if (!meeting) {
+                this.sendResponse(ws, message.requestId, false, null, 'Réunion non trouvée');
+                return;
+            }
+
+            // Vérifier le statut
+            if (meeting.status === 'cancelled') {
+                this.sendResponse(ws, message.requestId, false, null, 'Cette réunion a été annulée');
+                return;
+            }
+
+            if (meeting.status === 'completed') {
+                this.sendResponse(ws, message.requestId, false, null, 'Cette réunion est terminée');
+                return;
+            }
+
+            // Vérifier si le client est déjà dans une réunion
+            if (this.clientToMeeting.has(clientId)) {
+                const currentMeetingId = this.clientToMeeting.get(clientId);
+                if (currentMeetingId !== meeting.id) {
+                    this.sendResponse(ws, message.requestId, false, null, 'Vous êtes déjà dans une autre réunion');
+                    return;
+                }
+            }
+
+            // Vérifier la limite de participants
+            const meetingParticipants = this.participants.get(meeting.id) || new Map();
+            if (meetingParticipants.size >= meeting.maxParticipants) {
+                this.sendResponse(ws, message.requestId, false, null, 'La réunion est complète');
+                return;
+            }
+
+            // Créer ou mettre à jour la liste des participants de cette réunion
+            if (!this.participants.has(meeting.id)) {
+                this.participants.set(meeting.id, new Map());
+            }
+
+            const participantId = 'part_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            const participant = {
+                id: participantId,
+                clientId: clientId,
+                name: participantName,
+                joinedAt: new Date().toISOString(),
+                isOrganizer: meeting.organizerId === clientId
+            };
+
+            this.participants.get(meeting.id).set(participantId, participant);
+            this.clientToMeeting.set(clientId, meeting.id);
+
+            console.log('[MeetingServer] Participant rejoint:', participantId, 'dans réunion', meeting.id);
+
+            // Notifier les autres participants
+            this.notifyParticipants(meeting.id, {
+                type: 'PARTICIPANT_JOINED',
+                participant: participant
+            }, participantId);
+
+            // Répondre au client
+            this.sendResponse(ws, message.requestId, true, {
+                meeting: meeting,
+                participant: participant,
+                participantsCount: this.participants.get(meeting.id).size
+            }, null);
+
+        } catch (error) {
+            console.error('[MeetingServer] Erreur rejoindre réunion:', error.message);
+            this.sendResponse(ws, message.requestId, false, null, error.message);
+        }
+    }
+
+    /**
+     * Gère la demande de quitter une réunion
+     * @param {WebSocket} ws - WebSocket du client
+     * @param {string} clientId - Identifiant du client
+     * @param {object} message - Message reçu
+     */
+    async handleLeaveMeeting(ws, clientId, message) {
+        try {
+            const meetingId = message.data?.meetingId;
+
+            console.log('[MeetingServer] Demande de quitter réunion par', clientId);
+
+            // Vérifier si le client est dans une réunion
+            const currentMeetingId = this.clientToMeeting.get(clientId);
+            if (!currentMeetingId) {
+                this.sendResponse(ws, message.requestId, false, null, 'Vous n\'êtes dans aucune réunion');
+                return;
+            }
+
+            // Si meetingId est spécifié, vérifier qu'il correspond
+            if (meetingId && meetingId !== currentMeetingId) {
+                this.sendResponse(ws, message.requestId, false, null, 'ID de réunion incorrect');
+                return;
+            }
+
+            const actualMeetingId = meetingId || currentMeetingId;
+            const meetingParticipants = this.participants.get(actualMeetingId);
+
+            if (!meetingParticipants) {
+                this.sendResponse(ws, message.requestId, false, null, 'Réunion non trouvée');
+                return;
+            }
+
+            // Trouver le participant
+            let participantId = null;
+            for (const [pid, participant] of meetingParticipants) {
+                if (participant.clientId === clientId) {
+                    participantId = pid;
+                    break;
+                }
+            }
+
+            if (!participantId) {
+                this.sendResponse(ws, message.requestId, false, null, 'Participant non trouvé');
+                return;
+            }
+
+            const participant = meetingParticipants.get(participantId);
+
+            // Retirer le participant
+            meetingParticipants.delete(participantId);
+            this.clientToMeeting.delete(clientId);
+
+            // Nettoyer si la réunion est vide
+            if (meetingParticipants.size === 0) {
+                this.participants.delete(actualMeetingId);
+            }
+
+            console.log('[MeetingServer] Parti quitte:', participantId, 'de réunion', actualMeetingId);
+
+            // Notifier les autres participants
+            this.notifyParticipants(actualMeetingId, {
+                type: 'PARTICIPANT_LEFT',
+                participantId: participantId
+            }, participantId);
+
+            // Répondre au client
+            this.sendResponse(ws, message.requestId, true, { left: true }, null);
+
+        } catch (error) {
+            console.error('[MeetingServer] Erreur quitter réunion:', error.message);
+            this.sendResponse(ws, message.requestId, false, null, error.message);
+        }
+    }
+
+    /**
+     * Gère la demande de récupération des participants
+     * @param {WebSocket} ws - WebSocket du client
+     * @param {string} clientId - Identifiant du client
+     * @param {object} message - Message reçu
+     */
+    handleGetParticipants(ws, clientId, message) {
+        try {
+            const meetingId = message.data?.meetingId;
+
+            if (!meetingId) {
+                this.sendResponse(ws, message.requestId, false, null, 'ID de réunion manquant');
+                return;
+            }
+
+            const meetingParticipants = this.participants.get(meetingId);
+            if (!meetingParticipants) {
+                this.sendResponse(ws, message.requestId, true, [], null);
+                return;
+            }
+
+            const participantsList = Array.from(meetingParticipants.values());
+            this.sendResponse(ws, message.requestId, true, participantsList, null);
+
+        } catch (error) {
+            console.error('[MeetingServer] Erreur récupération participants:', error.message);
+            this.sendResponse(ws, message.requestId, false, null, error.message);
+        }
+    }
+
+    /**
+     * Notifie tous les participants d'une réunion
+     * @param {string} meetingId - ID de la réunion
+     * @param {object} notification - Notification à envoyer
+     * @param {string} excludeParticipantId - ID du participant à exclure
+     */
+    notifyParticipants(meetingId, notification, excludeParticipantId = null) {
+        const meetingParticipants = this.participants.get(meetingId);
+        if (!meetingParticipants) return;
+
+        meetingParticipants.forEach((participant) => {
+            if (participant.id !== excludeParticipantId) {
+                const client = this.clients.get(participant.clientId);
+                if (client && client.ws && client.ws.readyState === WebSocket.OPEN) {
+                    this.sendToClient(client.ws, notification);
+                }
+            }
+        });
+    }
+
+    /**
+     * Nettoie un participant lors de la déconnexion
+     * @param {string} clientId - ID du client
+     */
+    cleanupParticipant(clientId) {
+        const meetingId = this.clientToMeeting.get(clientId);
+        if (!meetingId) return;
+
+        const meetingParticipants = this.participants.get(meetingId);
+        if (!meetingParticipants) return;
+
+        // Trouver et retirer le participant
+        let participantId = null;
+        for (const [pid, participant] of meetingParticipants) {
+            if (participant.clientId === clientId) {
+                participantId = pid;
+                break;
+            }
+        }
+
+        if (participantId) {
+            const participant = meetingParticipants.get(participantId);
+            meetingParticipants.delete(participantId);
+            this.clientToMeeting.delete(clientId);
+
+            // Nettoyer si vide
+            if (meetingParticipants.size === 0) {
+                this.participants.delete(meetingId);
+            }
+
+            console.log('[MeetingServer] Participant nettoyé:', participantId);
+
+            // Notifier les autres
+            this.notifyParticipants(meetingId, {
+                type: 'PARTICIPANT_LEFT',
+                participantId: participantId
+            }, participantId);
+        }
+    }
+
     /**
      * Arrête le serveur WebSocket
      */
@@ -585,6 +926,304 @@ class MeetingServer {
             this.wss.close(() => {
                 console.log('[MeetingServer] Serveur arrêté');
             });
+        }
+    }
+
+    // ==================== MODULE 5: SIGNALISATION WEBRTC ====================
+
+    /**
+     * Vérifie qu'un client appartient à une réunion
+     * @param {string} clientId - ID du client
+     * @param {string} meetingId - ID de la réunion
+     * @returns {boolean} Vrai si le client est dans la réunion
+     */
+    isClientInMeeting(clientId, meetingId) {
+        const clientMeetingId = this.clientToMeeting.get(clientId);
+        return clientMeetingId === meetingId;
+    }
+
+    /**
+     * Gère une offre WebRTC
+     * @param {WebSocket} ws - WebSocket du client
+     * @param {string} clientId - ID du client
+     * @param {object} message - Message reçu
+     */
+    handleWebRTCOffer(ws, clientId, message) {
+        try {
+            const { meetingId, fromParticipantId, toParticipantId, offer } = message;
+
+            console.log('[MeetingServer] Offre WebRTC de', fromParticipantId, 'vers', toParticipantId);
+
+            // Vérifier que l'expéditeur est dans la réunion
+            if (!this.isClientInMeeting(clientId, meetingId)) {
+                console.warn('[MeetingServer] Offre WebRTC refusée: client pas dans la réunion');
+                return;
+            }
+
+            // Trouver le destinataire
+            const meetingParticipants = this.participants.get(meetingId);
+            if (!meetingParticipants) {
+                console.warn('[MeetingServer] Réunion non trouvée:', meetingId);
+                return;
+            }
+
+            const toParticipant = meetingParticipants.get(toParticipantId);
+            if (!toParticipant) {
+                console.warn('[MeetingServer] Destinataire non trouvé:', toParticipantId);
+                return;
+            }
+
+            // Relayer l'offre au destinataire
+            const toClient = this.clients.get(toParticipant.clientId);
+            if (toClient && toClient.ws && toClient.ws.readyState === WebSocket.OPEN) {
+                this.sendToClient(toClient.ws, {
+                    type: 'WEBRTC_OFFER',
+                    meetingId: meetingId,
+                    fromParticipantId: fromParticipantId,
+                    toParticipantId: toParticipantId,
+                    offer: offer
+                });
+                console.log('[MeetingServer] Offre relayée à', toParticipantId);
+            }
+
+        } catch (error) {
+            console.error('[MeetingServer] Erreur traitement offre WebRTC:', error.message);
+        }
+    }
+
+    /**
+     * Gère une réponse WebRTC
+     * @param {WebSocket} ws - WebSocket du client
+     * @param {string} clientId - ID du client
+     * @param {object} message - Message reçu
+     */
+    handleWebRTCAnswer(ws, clientId, message) {
+        try {
+            const { meetingId, fromParticipantId, toParticipantId, answer } = message;
+
+            console.log('[MeetingServer] Réponse WebRTC de', fromParticipantId, 'vers', toParticipantId);
+
+            // Vérifier que l'expéditeur est dans la réunion
+            if (!this.isClientInMeeting(clientId, meetingId)) {
+                console.warn('[MeetingServer] Réponse WebRTC refusée: client pas dans la réunion');
+                return;
+            }
+
+            // Trouver le destinataire
+            const meetingParticipants = this.participants.get(meetingId);
+            if (!meetingParticipants) {
+                console.warn('[MeetingServer] Réunion non trouvée:', meetingId);
+                return;
+            }
+
+            const toParticipant = meetingParticipants.get(toParticipantId);
+            if (!toParticipant) {
+                console.warn('[MeetingServer] Destinataire non trouvé:', toParticipantId);
+                return;
+            }
+
+            // Relayer la réponse au destinataire
+            const toClient = this.clients.get(toParticipant.clientId);
+            if (toClient && toClient.ws && toClient.ws.readyState === WebSocket.OPEN) {
+                this.sendToClient(toClient.ws, {
+                    type: 'WEBRTC_ANSWER',
+                    meetingId: meetingId,
+                    fromParticipantId: fromParticipantId,
+                    toParticipantId: toParticipantId,
+                    answer: answer
+                });
+                console.log('[MeetingServer] Réponse relayée à', toParticipantId);
+            }
+
+        } catch (error) {
+            console.error('[MeetingServer] Erreur traitement réponse WebRTC:', error.message);
+        }
+    }
+
+    /**
+     * Gère un ICE candidate WebRTC
+     * @param {WebSocket} ws - WebSocket du client
+     * @param {string} clientId - ID du client
+     * @param {object} message - Message reçu
+     */
+    handleWebRTCIceCandidate(ws, clientId, message) {
+        try {
+            const { meetingId, fromParticipantId, toParticipantId, candidate } = message;
+
+            console.log('[MeetingServer] ICE candidate de', fromParticipantId, 'vers', toParticipantId);
+
+            // Vérifier que l'expéditeur est dans la réunion
+            if (!this.isClientInMeeting(clientId, meetingId)) {
+                console.warn('[MeetingServer] ICE candidate refusée: client pas dans la réunion');
+                return;
+            }
+
+            // Trouver le destinataire
+            const meetingParticipants = this.participants.get(meetingId);
+            if (!meetingParticipants) {
+                console.warn('[MeetingServer] Réunion non trouvée:', meetingId);
+                return;
+            }
+
+            const toParticipant = meetingParticipants.get(toParticipantId);
+            if (!toParticipant) {
+                console.warn('[MeetingServer] Destinataire non trouvé:', toParticipantId);
+                return;
+            }
+
+            // Relayer l'ICE candidate au destinataire
+            const toClient = this.clients.get(toParticipant.clientId);
+            if (toClient && toClient.ws && toClient.ws.readyState === WebSocket.OPEN) {
+                this.sendToClient(toClient.ws, {
+                    type: 'WEBRTC_ICE_CANDIDATE',
+                    meetingId: meetingId,
+                    fromParticipantId: fromParticipantId,
+                    toParticipantId: toParticipantId,
+                    candidate: candidate
+                });
+                console.log('[MeetingServer] ICE candidate relayée à', toParticipantId);
+            }
+
+        } catch (error) {
+            console.error('[MeetingServer] Erreur traitement ICE candidate:', error.message);
+        }
+    }
+
+    /**
+     * Gère une renégociation WebRTC
+     * @param {WebSocket} ws - WebSocket du client
+     * @param {string} clientId - ID du client
+     * @param {object} message - Message reçu
+     */
+    handleWebRTCRenegotiation(ws, clientId, message) {
+        try {
+            const { meetingId, fromParticipantId, toParticipantId, offer } = message;
+
+            console.log('[MeetingServer] Renégociation WebRTC de', fromParticipantId, 'vers', toParticipantId);
+
+            // Vérifier que l'expéditeur est dans la réunion
+            if (!this.isClientInMeeting(clientId, meetingId)) {
+                console.warn('[MeetingServer] Renégociation refusée: client pas dans la réunion');
+                return;
+            }
+
+            // Trouver le destinataire
+            const meetingParticipants = this.participants.get(meetingId);
+            if (!meetingParticipants) {
+                console.warn('[MeetingServer] Réunion non trouvée:', meetingId);
+                return;
+            }
+
+            const toParticipant = meetingParticipants.get(toParticipantId);
+            if (!toParticipant) {
+                console.warn('[MeetingServer] Destinataire non trouvé:', toParticipantId);
+                return;
+            }
+
+            // Relayer l'offre de renégociation au destinataire
+            const toClient = this.clients.get(toParticipant.clientId);
+            if (toClient && toClient.ws && toClient.ws.readyState === WebSocket.OPEN) {
+                this.sendToClient(toClient.ws, {
+                    type: 'WEBRTC_OFFER', // Réutiliser le même type pour la renégociation
+                    meetingId: meetingId,
+                    fromParticipantId: fromParticipantId,
+                    toParticipantId: toParticipantId,
+                    offer: offer,
+                    renegotiation: true
+                });
+                console.log('[MeetingServer] Renégociation relayée à', toParticipantId);
+            }
+
+        } catch (error) {
+            console.error('[MeetingServer] Erreur traitement renégociation:', error.message);
+        }
+    }
+
+    /**
+     * Gère un changement d'état média
+     * @param {WebSocket} ws - WebSocket du client
+     * @param {string} clientId - ID du client
+     * @param {object} message - Message reçu
+     */
+    handleMediaStateChanged(ws, clientId, message) {
+        try {
+            const { meetingId, participantId, state } = message;
+
+            console.log('[MeetingServer] État média changé pour', participantId, state);
+
+            // Vérifier que le client est dans la réunion
+            if (!this.isClientInMeeting(clientId, meetingId)) {
+                console.warn('[MeetingServer] Changement état refusé: client pas dans la réunion');
+                return;
+            }
+
+            // Notifier tous les autres participants
+            this.notifyParticipants(meetingId, {
+                type: 'MEDIA_STATE_CHANGED',
+                participantId: participantId,
+                state: state
+            }, participantId);
+
+        } catch (error) {
+            console.error('[MeetingServer] Erreur traitement changement état:', error.message);
+        }
+    }
+
+    /**
+     * Gère le début de partage d'écran
+     * @param {WebSocket} ws - WebSocket du client
+     * @param {string} clientId - ID du client
+     * @param {object} message - Message reçu
+     */
+    handleScreenShareStarted(ws, clientId, message) {
+        try {
+            const { meetingId, participantId } = message;
+
+            console.log('[MeetingServer] Partage d\'écran démarré par', participantId);
+
+            // Vérifier que le client est dans la réunion
+            if (!this.isClientInMeeting(clientId, meetingId)) {
+                console.warn('[MeetingServer] Partage écran refusé: client pas dans la réunion');
+                return;
+            }
+
+            // Notifier tous les autres participants
+            this.notifyParticipants(meetingId, {
+                type: 'SCREEN_SHARE_STARTED',
+                participantId: participantId
+            }, participantId);
+
+        } catch (error) {
+            console.error('[MeetingServer] Erreur traitement début partage écran:', error.message);
+        }
+    }
+
+    /**
+     * Gère l'arrêt de partage d'écran
+     * @param {WebSocket} ws - WebSocket du client
+     * @param {string} clientId - ID du client
+     * @param {object} message - Message reçu
+     */
+    handleScreenShareStopped(ws, clientId, message) {
+        try {
+            const { meetingId, participantId } = message;
+
+            console.log('[MeetingServer] Partage d\'écran arrêté par', participantId);
+
+            // Vérifier que le client est dans la réunion
+            if (!this.isClientInMeeting(clientId, meetingId)) {
+                console.warn('[MeetingServer] Arrêt partage refusé: client pas dans la réunion');
+                return;
+            }
+
+            // Notifier tous les autres participants
+            this.notifyParticipants(meetingId, {
+                type: 'SCREEN_SHARE_STOPPED',
+                participantId: participantId
+            }, participantId);
+
+        } catch (error) {
+            console.error('[MeetingServer] Erreur traitement arrêt partage écran:', error.message);
         }
     }
 }
